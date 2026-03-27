@@ -1,6 +1,13 @@
-public class Test {
-    public static void main(String[] args) {
-        System.out.println(13.5 % 5.2);
-        System.out.println(3.5 % 5);
+class Test {
+    public static void main(String args[]) {
+
+        try {
+            int a = 10 / 0;   // error
+        }
+
+        catch (ArithmeticException e) {
+            System.out.println(e.getMessage());
+        }
+
     }
 }

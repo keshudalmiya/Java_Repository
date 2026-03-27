@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam Hand Tracked Particles</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        #info {
+            position: absolute; top: 10px; width: 100%; text-align: center;
+            color: #fff; pointer-events: none; z-index: 10;
+        }
+        /* Small preview of your webcam in the corner */
+        #webcam {
+            position: absolute; bottom: 10px; left: 10px;
+            width: 160px; height: 120px; border-radius: 8px;
+            transform: scaleX(-1); /* Mirror the video */
+            border: 2px solid #333; z-index: 5;
+        }
+        .kbd { background: #333; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        Please allow Webcam access.<br>
+        Move your <strong>Index Finger</strong> to expand particles.<br>
+        <strong>Pinch Thumb & Index</strong> to switch shapes.
+    </div>
+
+    <video id="webcam" autoplay playsinline></video>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <script>
+        // ==========================================
+        // 1. THREE.JS SCENE SETUP
+        // ==========================================
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 50;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // ==========================================
+        // 2. PARTICLE SYSTEM GENERATION
+        // ==========================================
+        const particleCount = 15000;
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        const shapes = { flow: [], heart: [], saturn: [], flower: [], fireworks: [] };
+
+        for (let i = 0; i < particleCount; i++) {
+            // Flow
+            const r = 20 * Math.cbrt(Math.random());
+            const theta = Math.random() * 2 * Math.PI;
+            const phi = Math.acos(2 * Math.random() - 1);
+            shapes.flow.push(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+
+            // Heart
+            const t = Math.random() * Math.PI * 2;
+            const hx = 16 * Math.pow(Math.sin(t), 3);
+            const hy = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+            shapes.heart.push(hx, hy, (Math.random() - 0.5) * 5);
+
+            // Saturn
+            if (i < particleCount * 0.4) {
+                const sr = 8 * Math.cbrt(Math.random());
+                shapes.saturn.push(sr * Math.sin(phi) * Math.cos(theta), sr * Math.sin(phi) * Math.sin(theta), sr * Math.cos(phi));
+            } else {
+                const ringR = 12 + Math.random() * 8;
+                shapes.saturn.push(ringR * Math.cos(theta), (Math.random() - 0.5) * 2, ringR * Math.sin(theta));
+            }
+
+            // Flower
+            const petalTheta = Math.random() * Math.PI * 2;
+            const petalR = 20 * Math.cos(5 * petalTheta) * Math.random();
+            shapes.flower.push(petalR * Math.cos(petalTheta), petalR * Math.sin(petalTheta), (Math.random() - 0.5) * 4);
+
+            // Fireworks
+            const cx = (Math.random() - 0.5) * 40, cy = (Math.random() - 0.5) * 40;
+            const fwR = Math.random() * 10;
+            shapes.fireworks.push(cx + fwR * Math.sin(phi) * Math.cos(theta), cy + fwR * Math.sin(phi) * Math.sin(theta), fwR * Math.cos(phi));
+
+            // Init values
+            positions[i * 3] = shapes.flow[i * 3];
+            positions[i * 3 + 1] = shapes.flow[i * 3 + 1];
+            positions[i * 3 + 2] = shapes.flow[i * 3 + 2];
+            colors[i * 3] = 0.5; colors[i * 3 + 1] = 0.8; colors[i * 3 + 2] = 1.0;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({
+            size: 0.3, vertexColors: true, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending
+        });
+
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+
+        // ==========================================
+        // 3. SHAPE SWITCHING LOGIC
+        // ==========================================
+        let currentShapeIndex = 0;
+        const shapeNames = ['flow', 'heart', 'saturn', 'flower', 'fireworks'];
+        let isAnimatingShape = false; // Prevents rapid re-triggering
+
+        function switchShape() {
+            if (isAnimatingShape) return;
+            isAnimatingShape = true;
+            
+            currentShapeIndex = (currentShapeIndex + 1) % shapeNames.length;
+            const targetShape = shapes[shapeNames[currentShapeIndex]];
+            const posAttribute = geometry.attributes.position;
+            
+            for(let i = 0; i < particleCount; i++) {
+                gsap.to(posAttribute.array, {
+                    duration: 1.5,
+                    [i * 3]: targetShape[i * 3],
+                    [i * 3 + 1]: targetShape[i * 3 + 1],
+                    [i * 3 + 2]: targetShape[i * 3 + 2],
+                    ease: "power2.inOut",
+                    onUpdate: () => posAttribute.needsUpdate = true,
+                    onComplete: i === 0 ? () => isAnimatingShape = false : null
+                });
+            }
+        }
+
+        // ==========================================
+        // 4. MEDIAPIPE WEBCAM TRACKING
+        // ==========================================
+        const pointer = new THREE.Vector2(-1000, -1000); 
+        const videoElement = document.getElementById('webcam');
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1, // Only track one hand for performance
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // Landmark 8 is the Index Finger Tip
+                const indexTip = landmarks[8];
+                // Landmark 4 is the Thumb Tip
+                const thumbTip = landmarks[4];
+
+                // Map index finger to screen space (Note: X is inverted because webcam is mirrored)
+                pointer.x = -(indexTip.x * 2 - 1); 
+                pointer.y = -(indexTip.y * 2 - 1);
+
+                // Detect "Pinch" Gesture (Calculate distance between thumb and index)
+                const distance = Math.sqrt(Math.pow(indexTip.x - thumbTip.x, 2) + Math.pow(indexTip.y - thumbTip.y, 2));
+                
+                // If pinched close together, switch shape
+                if (distance < 0.05) {
+                    switchShape();
+                }
+            } else {
+                // Move interaction point off-screen if no hands are visible
+                pointer.set(-1000, -1000);
+            }
+        });
+
+        // Start the Webcam
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        cameraUtils.start();
+
+        // ==========================================
+        // 5. RENDER LOOP
+        // ==========================================
+        const raycaster = new THREE.Raycaster();
+        const planeZ = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const targetPoint = new THREE.Vector3();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Project MediaPipe coordinate into 3D space
+            raycaster.setFromCamera(pointer, camera);
+            raycaster.ray.intersectPlane(planeZ, targetPoint);
+
+            const pos = geometry.attributes.position;
+            const col = geometry.attributes.color;
+
+            for (let i = 0; i < particleCount; i++) {
+                const px = pos.getX(i);
+                const py = pos.getY(i);
+                const dx = px - targetPoint.x;
+                const dy = py - targetPoint.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < 10) {
+                    const force = (10 - dist) * 0.05;
+                    pos.setX(i, px + (dx / dist) * force);
+                    pos.setY(i, py + (dy / dist) * force);
+                    col.setXYZ(i, 1.0, 0.2 + dist/10, 0.2); 
+                } else {
+                    col.setXYZ(i, 
+                        THREE.MathUtils.lerp(col.getX(i), 0.2, 0.05),
+                        THREE.MathUtils.lerp(col.getY(i), 0.6, 0.05),
+                        THREE.MathUtils.lerp(col.getZ(i), 1.0, 0.05)
+                    );
+                }
+            }
+            
+            pos.needsUpdate = true;
+            col.needsUpdate = true;
+
+            particles.rotation.y += 0.002;
+            particles.rotation.x += 0.001;
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
